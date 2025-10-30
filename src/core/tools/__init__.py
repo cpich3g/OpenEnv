@@ -8,9 +8,11 @@
 
 from .git_server_client import GitServerClient, RepoInfo
 from .local_python_executor import PyExecutor
+from .local_rust_executor import RustExecutor
 
 __all__ = [
     "PyExecutor",
+    "RustExecutor",
     "GitServerClient",
     "RepoInfo",
 ]
