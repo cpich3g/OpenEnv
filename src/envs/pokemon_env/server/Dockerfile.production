@@ -1,0 +1,114 @@
+# Dockerfile for Pokemon Battle Environment (Production-Ready)
+# This is a security-hardened version of the Pokemon environment Docker image
+#
+# Security improvements:
+# - Runs as non-root user
+# - Updated dependencies with security patches
+# - Optional security flag configuration
+# - Health checks and monitoring
+
+# Stage 1: Build Pokemon Showdown
+FROM node:18-slim AS showdown-builder
+
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /pokemon-showdown
+
+RUN git clone https://github.com/smogon/pokemon-showdown.git . && \
+    npm install && \
+    cp config/config-example.js config/config.js
+
+# Stage 2: Build OpenEnv base (can be overridden for CI/CD)
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE:-openenv-base:latest} AS final
+
+# Install Node.js for running Pokemon Showdown
+RUN apt-get update && apt-get install -y \
+    nodejs \
+    npm \
+    curl \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Pokemon Showdown from builder
+COPY --from=showdown-builder /pokemon-showdown /pokemon-showdown
+
+# Install poke-env and dependencies with secure versions
+RUN pip install --no-cache-dir \
+    certifi>=2024.7.4 \
+    cryptography>=43.0.1 \
+    jinja2>=3.1.6 \
+    requests>=2.32.4 \
+    urllib3>=2.5.0 \
+    twisted>=24.7.0rc1 \
+    idna>=3.7 \
+    poke-env>=0.9.0 \
+    gymnasium>=0.29.0
+
+# Copy OpenEnv core (base image already set WORKDIR=/app)
+COPY src/core/ /app/src/core/
+
+# Copy Pokemon environment code
+COPY src/envs/pokemon_env/ /app/src/envs/pokemon_env/
+
+# Copy README for web interface documentation
+COPY src/envs/pokemon_env/README.md /app/README.md
+
+# Create non-root user for security
+RUN groupadd -r pokemonenv && \
+    useradd -r -g pokemonenv -u 1000 pokemonenv && \
+    chown -R pokemonenv:pokemonenv /app /pokemon-showdown
+
+# Pokemon environment variables
+ENV POKEMON_BATTLE_FORMAT=gen8randombattle
+ENV POKEMON_PLAYER_USERNAME=player
+ENV POKEMON_REWARD_MODE=sparse
+ENV POKEMON_MAX_TURNS=1000
+ENV PORT=9980
+# Security mode: set to "false" for production, "true" for development
+ENV SHOWDOWN_NO_SECURITY=false
+
+# Expose ports (8000=Showdown, 9980=OpenEnv default)
+EXPOSE 8000 ${PORT}
+
+# Create supervisor config for managing both processes
+RUN echo '[supervisord]\n\
+nodaemon=true\n\
+logfile=/dev/null\n\
+logfile_maxbytes=0\n\
+user=pokemonenv\n\
+\n\
+[program:showdown]\n\
+command=bash -c "if [ \"${SHOWDOWN_NO_SECURITY}\" = \"true\" ]; then node pokemon-showdown start --no-security; else node pokemon-showdown start; fi"\n\
+directory=/pokemon-showdown\n\
+user=pokemonenv\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/dev/fd/1\n\
+stdout_logfile_maxbytes=0\n\
+stderr_logfile=/dev/fd/2\n\
+stderr_logfile_maxbytes=0\n\
+startsecs=5\n\
+\n\
+[program:openenv]\n\
+command=bash -c "uvicorn envs.pokemon_env.server.app:app --host 0.0.0.0 --port ${PORT:-9980}"\n\
+directory=/app\n\
+environment=PYTHONPATH="/app/src",PORT="${PORT:-9980}"\n\
+user=pokemonenv\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/dev/fd/1\n\
+stdout_logfile_maxbytes=0\n\
+stderr_logfile=/dev/fd/2\n\
+stderr_logfile_maxbytes=0\n\
+startsecs=10\n' > /etc/supervisor/conf.d/pokemon-env.conf
+
+# Health check (check both services)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:8000 && curl -f http://localhost:${PORT:-9980}/health || exit 1
+
+# Switch to non-root user
+USER pokemonenv
+
+# Run supervisor to manage both processes
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

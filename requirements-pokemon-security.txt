@@ -1,0 +1,32 @@
+# Security-focused minimum dependency versions for Pokemon Environment
+# Last updated: 2025-11-09
+# 
+# These versions address known security vulnerabilities
+# Update regularly using: pip-audit
+
+# Core dependencies with security fixes
+certifi>=2024.7.4  # CVE fixes for GLOBALTRUST certificates
+cryptography>=43.0.1  # Multiple CVE fixes (PKCS12, RSA, NULL pointer)
+jinja2>=3.1.6  # XSS and sandbox escape fixes
+requests>=2.32.4  # Credential leak and SSL verification fixes
+urllib3>=2.5.0  # SSRF protection and redirect handling
+twisted>=24.7.0rc1  # XSS and HTTP pipelining fixes
+idna>=3.7  # ReDoS fix
+configobj>=5.0.9  # ReDoS fix
+
+# Build tools with security fixes
+pip>=25.3  # Path traversal fix
+setuptools>=78.1.1  # RCE and path traversal fixes
+
+# Pokemon environment dependencies
+poke-env>=0.9.0
+gymnasium>=0.29.0
+
+# OpenEnv core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+wsproto>=1.0.0
+
+# Additional dependencies (if needed)
+numpy>=1.19.0
+torch>=1.9.0
