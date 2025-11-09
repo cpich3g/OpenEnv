@@ -269,6 +269,65 @@ pytest tests/envs/pokemon_env/ -v
 - Check Node.js 18+ is available in base image
 - Verify all dependencies in `requirements.txt`
 
+## Security Considerations
+
+### Production Deployment
+
+When deploying the Pokemon environment to production, consider the following security measures:
+
+#### Network Isolation
+- Deploy Pokemon Showdown and OpenEnv in isolated network segments
+- Use firewall rules to restrict access to necessary ports only
+- Consider using a VPN or SSH tunnel for remote access
+
+#### Authentication & Authorization
+- The `--no-security` flag is used by default for Pokemon Showdown for easier development
+- For production, remove this flag and implement proper authentication
+- Use environment-specific configuration files
+
+#### Dependency Security
+- Regularly update dependencies to patch security vulnerabilities
+- Use `requirements-pokemon-security.txt` for minimum secure versions
+- Run `pip-audit` regularly to check for known vulnerabilities
+- Pin dependency versions in production to ensure reproducibility
+
+```bash
+# Check for vulnerabilities
+pip-audit --desc
+
+# Update to secure versions
+pip install -r requirements-pokemon-security.txt
+```
+
+#### Container Security
+- Run containers as non-root user when possible
+- Scan Docker images for vulnerabilities
+- Keep base images updated
+- Use Docker secrets for sensitive configuration
+
+#### Monitoring & Logging
+- Monitor API endpoints for unusual activity
+- Set up alerts for repeated errors or failures
+- Review logs regularly for security incidents
+- Implement rate limiting to prevent abuse
+
+#### Best Practices
+- Never expose Pokemon Showdown port (8000) directly to the internet
+- Use HTTPS/TLS for OpenEnv API in production
+- Implement proper error handling that doesn't leak sensitive information
+- Regular security audits and penetration testing
+
+### Vulnerability Reporting
+
+If you discover a security vulnerability:
+1. **DO NOT** create a public GitHub issue
+2. Contact the maintainers privately
+3. Include details, reproduction steps, and potential impact
+
+### Security Updates
+
+Check `SECURITY_ADVISORY_POKEMON_ENV.md` for the latest security recommendations and vulnerability information.
+
 ## Credits
 
 - [poke-env](https://github.com/hsahovic/poke-env) - Pokemon battle simulation library
