@@ -49,7 +49,14 @@ print(f"Reward: {result.reward}, Done: {result.done}")
 
 **Recommended: All-in-One Container** (simplest approach)
 
-The main Dockerfile includes both Pokemon Showdown and OpenEnv in a single container:
+The main Dockerfile includes both Pokemon Showdown and OpenEnv in a single container. This is the **recommended approach for most users** because it's simpler, faster, and has lower latency.
+
+**Why choose all-in-one:**
+- ✅ Simpler setup - one container to manage
+- ✅ Lower latency - services communicate via localhost
+- ✅ Easier debugging - all logs in one place
+- ✅ No network configuration needed
+- ✅ Sufficient for most use cases
 
 ```bash
 # Build the all-in-one image (run from project root directory)
@@ -66,9 +73,13 @@ curl http://localhost:9980/health # OpenEnv server
 docker run -d --name pokemon-env -p 8000:8000 -p 8080:8080 -e PORT=8080 pokemon-env:latest
 ```
 
-**Advanced: Separate Containers** (for specialized deployments)
+**Advanced: Separate Containers** (for production at scale)
 
-If you need to run Pokemon Showdown and OpenEnv in separate containers:
+Use separate containers only if you need:
+- Independent scaling of Showdown vs OpenEnv
+- Multiple OpenEnv instances sharing one Showdown
+- Fault isolation between services
+- Kubernetes/orchestration with auto-scaling
 
 ```bash
 # Build separate images
@@ -88,6 +99,8 @@ docker run -d --name pokemon-env --network pokemon-network -p 9980:9980 \
 # Test
 curl http://localhost:9980/health
 ```
+
+**For more details on Docker configurations, see:** [DOCKER_CONFIGURATIONS.md](../../DOCKER_CONFIGURATIONS.md)
 
 ## Configuration
 
