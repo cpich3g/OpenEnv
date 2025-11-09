@@ -495,15 +495,22 @@ def test_random_bot_battle(env: PokemonEnv):
             
             # Small chance to switch if available and Pokemon is low HP
             if obs.available_switches and random.random() < 0.2 and active_hp < 0.3:
-                switch_idx = random.choice(range(len(obs.available_switches)))
+                switch_idx = random.choice(obs.available_switches)
                 action = PokemonAction(action_type="switch", action_index=switch_idx)
-                action_desc = f"Switch to {obs.team[switch_idx + 1].species.title()}"
+                # Find the Pokemon we're switching to in the team
+                switch_pokemon = next((p for p in obs.team if not p.active and not p.fainted), None)
+                switch_name = switch_pokemon.species.title() if switch_pokemon else f"Pokemon #{switch_idx}"
+                action_desc = f"Switch to {switch_name}"
                 switches_made += 1
                 
             # Otherwise, use a move
             elif obs.available_moves:
-                move_idx = random.choice(range(len(obs.available_moves)))
-                move_name = obs.available_moves[move_idx]
+                move_idx = random.choice(obs.available_moves)
+                # Get move name from active Pokemon's moves
+                move_name = "Unknown Move"
+                if obs.active_pokemon and obs.active_pokemon.moves:
+                    if move_idx < len(obs.active_pokemon.moves):
+                        move_name = obs.active_pokemon.moves[move_idx].get('id', 'Unknown Move')
                 
                 # Decide if we should use special mechanics
                 use_tera = False

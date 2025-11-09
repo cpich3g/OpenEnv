@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """
 Data models for Pokemon Battle Environment.
 
@@ -14,31 +20,74 @@ from core.env_server import Action, Observation, State
 
 
 @dataclass
+class RewardConfig:
+    """
+    Configuration for reward shaping in dense reward mode.
+    
+    Attributes:
+        faint_opponent_bonus: Reward for fainting an opponent Pokemon
+        faint_self_penalty: Penalty for losing one of your Pokemon
+        hp_damage_coefficient: Reward per % HP damage dealt to opponent
+        status_inflict_bonus: Reward for inflicting status effect (burn, paralyze, etc.)
+        status_remove_bonus: Reward for removing status from your Pokemon
+        stat_boost_bonus: Reward for stat boosts (Swords Dance, Dragon Dance, etc.)
+        buff_remove_bonus: Reward for removing opponent's stat boosts
+        hp_recovery_bonus: Reward for HP recovery moves
+        final_win_bonus: Bonus reward for winning the battle
+        final_loss_penalty: Penalty for losing the battle
+    """
+    faint_opponent_bonus: float = 0.2
+    faint_self_penalty: float = 0.2
+    hp_damage_coefficient: float = 0.05
+    status_inflict_bonus: float = 0.1
+    status_remove_bonus: float = 0.1
+    stat_boost_bonus: float = 0.05
+    buff_remove_bonus: float = 0.05
+    hp_recovery_bonus: float = 0.05
+    final_win_bonus: float = 10.0
+    final_loss_penalty: float = 10.0
+
+
+@dataclass
 class PokemonAction(Action):
     """
     Action for Pokemon battles.
 
     Attributes:
-        action_type: Type of action - "move" or "switch"
+        action_type: Type of action - "move", "switch", "forfeit", or "default"
         action_index: Index of the move (0-3) or switch target (0-5)
         move_id: Optional move identifier (e.g., "thunderbolt")
         switch_pokemon: Optional Pokemon to switch to (by species name or index)
         mega_evolve: Whether to mega evolve this turn (if applicable)
+        z_move: Whether to use a Z-move this turn (if applicable)
         dynamax: Whether to dynamax this turn (if applicable)
         terastallize: Whether to terastallize this turn (if applicable)
     """
-    action_type: Literal["move", "switch"] = "move"
+    action_type: Literal["move", "switch", "forfeit", "default"] = "move"
     action_index: int = 0
     move_id: Optional[str] = None
     switch_pokemon: Optional[str] = None
     mega_evolve: bool = False
+    z_move: bool = False
     dynamax: bool = False
     terastallize: bool = False
 
 
 @dataclass
 class PokemonData:
-    """Simplified Pokemon data for observations."""
+    """
+    Simplified Pokemon data for observations.
+    
+    Stat Masking Rules:
+    - Player Pokemon: All stats visible (seen=True)
+    - Opponent Pokemon (revealed): All stats visible (seen=True)
+    - Opponent Pokemon (unrevealed): Base stats masked as -1 (seen=False)
+    
+    Unrevealed Pokemon have species="unknown" or "unrevealed" and attack/defense/
+    special_attack/special_defense/speed set to -1 to indicate hidden values.
+    This simulates real Pokemon battles where you can't see opponent stats until
+    they're revealed in battle.
+    """
     species: str
     hp_percent: float
     max_hp: int
@@ -49,6 +98,7 @@ class PokemonData:
     ability: Optional[str]
     item: Optional[str]
     
+    # Base stats - may be -1 for opponent Pokemon (hidden/unknown)
     attack: int
     defense: int
     special_attack: int
@@ -60,6 +110,7 @@ class PokemonData:
     
     fainted: bool = False
     active: bool = False
+    seen: bool = True  # False for unrevealed opponent Pokemon
 
 
 @dataclass
@@ -80,10 +131,15 @@ class PokemonObservation(Observation):
         field_conditions: Dict of field effects (weather, terrain, hazards, etc.)
         turn: Current turn number
         forced_switch: Whether you must switch (active Pokemon fainted)
-        can_mega_evolve: Whether mega evolution is possible this turn
-        can_dynamax: Whether dynamax is possible this turn
-        can_terastallize: Whether terastallization is possible this turn
+        can_mega_evolve: Whether mega evolution is possible this turn (convenience field)
+        can_z_move: Whether a Z-move is possible this turn (convenience field)
+        can_dynamax: Whether dynamax is possible this turn (convenience field)
+        can_terastallize: Whether terastallization is possible this turn (convenience field)
         battle_format: Battle format (e.g., "gen8randombattle", "gen8ou")
+        
+    Note: The can_* fields are provided at the observation level for convenience.
+    They reflect whether the current active Pokemon can use these mechanics.
+    In poke-env, these are properties of the active Pokemon, not individual team members.
     """
     active_pokemon: Optional[PokemonData] = None
     opponent_active_pokemon: Optional[PokemonData] = None
@@ -99,6 +155,7 @@ class PokemonObservation(Observation):
     forced_switch: bool = False
     
     can_mega_evolve: bool = False
+    can_z_move: bool = False
     can_dynamax: bool = False
     can_terastallize: bool = False
     

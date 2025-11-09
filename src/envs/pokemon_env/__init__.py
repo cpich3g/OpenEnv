@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """
 Pokemon Battle Environment for OpenEnv.
 
@@ -19,6 +25,6 @@ Example:
 """
 
 from .client import PokemonEnv
-from .models import PokemonAction, PokemonObservation, PokemonState, PokemonData
+from .models import PokemonAction, PokemonObservation, PokemonState, PokemonData, RewardConfig
 
-__all__ = ["PokemonEnv", "PokemonAction", "PokemonObservation", "PokemonState", "PokemonData"]
+__all__ = ["PokemonEnv", "PokemonAction", "PokemonObservation", "PokemonState", "PokemonData", "RewardConfig"]

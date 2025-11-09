@@ -50,9 +50,10 @@ ENV POKEMON_BATTLE_FORMAT=gen8randombattle
 ENV POKEMON_PLAYER_USERNAME=player
 ENV POKEMON_REWARD_MODE=sparse
 ENV POKEMON_MAX_TURNS=1000
+ENV PORT=9980
 
-# Expose ports (8000=Showdown, 9980=OpenEnv)
-EXPOSE 8000 9980
+# Expose ports (8000=Showdown, 9980=OpenEnv default)
+EXPOSE 8000 ${PORT}
 
 # Create supervisor config for managing both processes
 RUN echo '[supervisord]\n\
@@ -72,9 +73,9 @@ stderr_logfile_maxbytes=0\n\
 startsecs=5\n\
 \n\
 [program:openenv]\n\
-command=uvicorn envs.pokemon_env.server.app:app --host 0.0.0.0 --port 9980\n\
+command=bash -c "uvicorn envs.pokemon_env.server.app:app --host 0.0.0.0 --port ${PORT:-9980}"\n\
 directory=/app\n\
-environment=PYTHONPATH="/app/src"\n\
+environment=PYTHONPATH="/app/src",PORT="${PORT:-9980}"\n\
 autostart=true\n\
 autorestart=true\n\
 stdout_logfile=/dev/fd/1\n\
@@ -85,7 +86,7 @@ startsecs=10\n' > /etc/supervisor/conf.d/pokemon-env.conf
 
 # Health check (check both services)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8000 && curl -f http://localhost:9980/health || exit 1
+    CMD curl -f http://localhost:8000 && curl -f http://localhost:${PORT:-9980}/health || exit 1
 
 # Run supervisor to manage both processes
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

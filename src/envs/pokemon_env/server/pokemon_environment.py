@@ -1,3 +1,9 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
 """
 Pokemon Battle Environment Server Implementation.
 
@@ -22,7 +28,7 @@ from typing import Any, Dict, List, Optional
 
 from core.env_server import Action, Environment, Observation
 
-from ..models import PokemonAction, PokemonObservation, PokemonData, PokemonState
+from ..models import PokemonAction, PokemonObservation, PokemonData, PokemonState, RewardConfig
 
 try:
     # Import from top-level poke_env module
@@ -34,7 +40,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "poke-env is not installed. "
-        "Please install it with: pip install poke-env"
+        "Please install it with: `pip install poke-env`"
     ) from e
 
 
@@ -224,7 +230,9 @@ class PokemonEnvironment(Environment):
         player_username: Username for player
         opponent: Opponent player (defaults to RandomPlayer)
         reward_mode: "sparse" (only at end) or "dense" (per-turn shaping)
+        reward_config: Configuration for reward coefficients (dense mode only)
         max_turns: Maximum turns before auto-forfeit
+        cleanup_interval: Clean up old battles every N episodes (default: 10)
 
     Example:
         >>> env = PokemonEnvironment(battle_format="gen9randombattle")
@@ -239,7 +247,9 @@ class PokemonEnvironment(Environment):
         player_username: Optional[str] = None,
         opponent: Optional[Player] = None,
         reward_mode: str = "sparse",
+        reward_config: Optional[RewardConfig] = None,
         max_turns: int = 1000,
+        cleanup_interval: int = 10,
     ):
         """Initialize Pokemon battle environment."""
         super().__init__()
@@ -247,7 +257,9 @@ class PokemonEnvironment(Environment):
         self.battle_format = battle_format
         self.player_username = player_username or f"player_{uuid.uuid4().hex[:8]}"
         self.reward_mode = reward_mode
+        self.reward_config = reward_config or RewardConfig()
         self.max_turns = max_turns
+        self.cleanup_interval = cleanup_interval
         self.showdown_server_url = os.getenv("SHOWDOWN_SERVER_URL", "localhost:8000")
 
         # Initialize player on POKE_LOOP
@@ -298,13 +310,25 @@ class PokemonEnvironment(Environment):
         self._last_opponent_fainted = 0
         self._last_player_fainted = 0
         self._last_opponent_hp = 1.0
+        self._last_opponent_status = None
+        self._last_player_status = None
+        self._last_player_boosts = {}
+        self._last_opponent_boosts = {}
 
         # Battle history cleanup interval
         self._episodes_completed = 0
-        self._cleanup_interval = 10  # Clean up every 10 episodes
+        self._cleanup_interval = self.cleanup_interval
 
-    def _pokemon_to_data(self, pokemon) -> Optional[PokemonData]:
-        """Convert poke-env Pokemon to PokemonData."""
+    def _pokemon_to_data(self, pokemon: Any, is_opponent: bool = False) -> Optional[PokemonData]:
+        """Convert poke-env Pokemon to PokemonData.
+        
+        Args:
+            pokemon: The poke-env Pokemon object
+            is_opponent: True if this is an opponent's Pokemon (for stat masking)
+        
+        Returns:
+            PokemonData with appropriate stat masking for opponent Pokemon
+        """
         if pokemon is None:
             return None
 
@@ -320,8 +344,29 @@ class PokemonEnvironment(Environment):
                 "category": str(move.category) if hasattr(move, 'category') else "status",
             })
 
+        # Determine if Pokemon has been seen (revealed)
+        # poke-env marks unrevealed Pokemon with species="unrevealed" or empty species
+        species = pokemon.species if hasattr(pokemon, 'species') else "unknown"
+        seen = not is_opponent or (species and species not in ["", "unrevealed", "unknown"])
+
         # Get base stats
         base_stats = pokemon.base_stats if hasattr(pokemon, 'base_stats') else {}
+        
+        # Mask opponent stats if not seen
+        if is_opponent and not seen:
+            # Mask all base stats for unrevealed opponent Pokemon
+            attack = -1
+            defense = -1
+            special_attack = -1
+            special_defense = -1
+            speed = -1
+        else:
+            # Show stats for player Pokemon or revealed opponent Pokemon
+            attack = base_stats.get("atk", 0) if isinstance(base_stats, dict) else 0
+            defense = base_stats.get("def", 0) if isinstance(base_stats, dict) else 0
+            special_attack = base_stats.get("spa", 0) if isinstance(base_stats, dict) else 0
+            special_defense = base_stats.get("spd", 0) if isinstance(base_stats, dict) else 0
+            speed = base_stats.get("spe", 0) if isinstance(base_stats, dict) else 0
 
         # Get current HP
         hp_fraction = pokemon.current_hp_fraction if hasattr(pokemon, 'current_hp_fraction') else 1.0
@@ -329,7 +374,7 @@ class PokemonEnvironment(Environment):
         current_hp = int(hp_fraction * max_hp)
 
         return PokemonData(
-            species=pokemon.species if hasattr(pokemon, 'species') else "unknown",
+            species=species,
             hp_percent=hp_fraction,
             max_hp=max_hp,
             current_hp=current_hp,
@@ -338,15 +383,16 @@ class PokemonEnvironment(Environment):
             types=[str(t.name) if hasattr(t, 'name') else str(t) for t in (pokemon.types if hasattr(pokemon, 'types') and pokemon.types else [])],
             ability=pokemon.ability if hasattr(pokemon, 'ability') else None,
             item=pokemon.item if hasattr(pokemon, 'item') else None,
-            attack=base_stats.get("atk", 0) if isinstance(base_stats, dict) else 0,
-            defense=base_stats.get("def", 0) if isinstance(base_stats, dict) else 0,
-            special_attack=base_stats.get("spa", 0) if isinstance(base_stats, dict) else 0,
-            special_defense=base_stats.get("spd", 0) if isinstance(base_stats, dict) else 0,
-            speed=base_stats.get("spe", 0) if isinstance(base_stats, dict) else 0,
+            attack=attack,
+            defense=defense,
+            special_attack=special_attack,
+            special_defense=special_defense,
+            speed=speed,
             boosts=dict(pokemon.boosts) if hasattr(pokemon, 'boosts') and pokemon.boosts else {},
             moves=moves,
             fainted=pokemon.fainted if hasattr(pokemon, 'fainted') else False,
             active=pokemon.active if hasattr(pokemon, 'active') else False,
+            seen=seen,
         )
 
     def _cleanup_old_battles(self):
@@ -423,35 +469,82 @@ class PokemonEnvironment(Environment):
                 return 0.0  # Tie
 
         elif self.reward_mode == "dense":
-            # Per-turn reward shaping
+            # Per-turn reward shaping with configurable coefficients
             reward = 0.0
 
-            # Reward for fainting opponent Pokemon
+            # 1. Reward for fainting opponent Pokemon
             opponent_fainted = sum(1 for p in battle.opponent_team.values() if p.fainted)
             new_faint_count = opponent_fainted - self._last_opponent_fainted
-            reward += new_faint_count * 0.2
+            reward += new_faint_count * self.reward_config.faint_opponent_bonus
             self._last_opponent_fainted = opponent_fainted
 
-            # Penalty for losing own Pokemon
+            # 2. Penalty for losing own Pokemon
             player_fainted = sum(1 for p in battle.team.values() if p.fainted)
             new_player_faint = player_fainted - self._last_player_fainted
-            reward -= new_player_faint * 0.2
+            reward -= new_player_faint * self.reward_config.faint_self_penalty
             self._last_player_fainted = player_fainted
 
-            # Small reward for opponent HP damage
+            # 3. Reward for opponent HP damage
             if battle.opponent_active_pokemon and hasattr(battle.opponent_active_pokemon, 'current_hp_fraction'):
                 current_hp = battle.opponent_active_pokemon.current_hp_fraction
                 if current_hp is not None:
                     hp_delta = self._last_opponent_hp - current_hp
-                    reward += hp_delta * 0.05
+                    reward += hp_delta * self.reward_config.hp_damage_coefficient
                     self._last_opponent_hp = current_hp
 
-            # Final outcome bonus
+            # 4. Reward for inflicting status on opponent
+            if battle.opponent_active_pokemon:
+                current_status = battle.opponent_active_pokemon.status
+                if current_status and current_status != self._last_opponent_status:
+                    reward += self.reward_config.status_inflict_bonus
+                self._last_opponent_status = current_status
+
+            # 5. Reward for removing status from player's Pokemon
+            if battle.active_pokemon:
+                current_player_status = battle.active_pokemon.status
+                if self._last_player_status and not current_player_status:
+                    # Status was removed
+                    reward += self.reward_config.status_remove_bonus
+                self._last_player_status = current_player_status
+
+            # 6. Reward for stat boosts on player's Pokemon
+            if battle.active_pokemon and hasattr(battle.active_pokemon, 'boosts'):
+                current_boosts = dict(battle.active_pokemon.boosts)
+                for stat, boost_value in current_boosts.items():
+                    last_boost = self._last_player_boosts.get(stat, 0)
+                    boost_increase = boost_value - last_boost
+                    if boost_increase > 0:
+                        reward += boost_increase * self.reward_config.stat_boost_bonus
+                self._last_player_boosts = current_boosts
+
+            # 7. Reward for removing opponent's stat boosts
+            if battle.opponent_active_pokemon and hasattr(battle.opponent_active_pokemon, 'boosts'):
+                current_opp_boosts = dict(battle.opponent_active_pokemon.boosts)
+                for stat, boost_value in current_opp_boosts.items():
+                    last_boost = self._last_opponent_boosts.get(stat, 0)
+                    boost_decrease = last_boost - boost_value
+                    if boost_decrease > 0:
+                        reward += boost_decrease * self.reward_config.buff_remove_bonus
+                self._last_opponent_boosts = current_opp_boosts
+
+            # 8. Reward for HP recovery (healing moves)
+            # Note: This is approximated by detecting HP increase on player's active Pokemon
+            if battle.active_pokemon and hasattr(battle.active_pokemon, 'current_hp_fraction'):
+                current_player_hp = battle.active_pokemon.current_hp_fraction
+                if current_player_hp is not None:
+                    # Check if HP increased (healing occurred)
+                    if hasattr(self, '_last_player_hp'):
+                        hp_recovery = current_player_hp - self._last_player_hp
+                        if hp_recovery > 0:
+                            reward += hp_recovery * self.reward_config.hp_recovery_bonus
+                    self._last_player_hp = current_player_hp
+
+            # 9. Final outcome bonus (significantly increased from 0.5 to 10.0)
             if done:
                 if battle.won:
-                    reward += 0.5
+                    reward += self.reward_config.final_win_bonus
                 elif battle.lost:
-                    reward -= 0.5
+                    reward -= self.reward_config.final_loss_penalty
 
             return reward
 
@@ -468,11 +561,11 @@ class PokemonEnvironment(Environment):
         """Convert poke-env Battle to PokemonObservation."""
 
         # Convert Pokemon
-        active_pokemon = self._pokemon_to_data(battle.active_pokemon)
-        opponent_active = self._pokemon_to_data(battle.opponent_active_pokemon)
+        active_pokemon = self._pokemon_to_data(battle.active_pokemon, is_opponent=False)
+        opponent_active = self._pokemon_to_data(battle.opponent_active_pokemon, is_opponent=True)
 
-        team = [self._pokemon_to_data(p) for p in battle.team.values()]
-        opponent_team = [self._pokemon_to_data(p) for p in battle.opponent_team.values()]
+        team = [self._pokemon_to_data(p, is_opponent=False) for p in battle.team.values()]
+        opponent_team = [self._pokemon_to_data(p, is_opponent=True) for p in battle.opponent_team.values()]
 
         # Available actions
         available_moves = list(range(len(battle.available_moves)))
@@ -541,6 +634,11 @@ class PokemonEnvironment(Environment):
             self._last_opponent_fainted = 0
             self._last_player_fainted = 0
             self._last_opponent_hp = 1.0
+            self._last_opponent_status = None
+            self._last_player_status = None
+            self._last_player_boosts = {}
+            self._last_opponent_boosts = {}
+            self._last_player_hp = 1.0
 
             # Start battle on POKE_LOOP
             async def start_battle():
@@ -624,7 +722,12 @@ class PokemonEnvironment(Environment):
             # Validate battle state
             if self._current_battle.finished:
                 logger.warning("Step called on finished battle, returning final state")
-                return self._battle_to_observation(self._current_battle, reward=None, done=True)
+                obs = self._battle_to_observation(self._current_battle, reward=None, done=True)
+                # Add warning to metadata
+                if not hasattr(obs, 'metadata') or obs.metadata is None:
+                    obs.metadata = {}
+                obs.metadata['warning'] = "Step called on finished battle"
+                return obs
 
             logger.debug(f"Step: action={action.action_type}, index={action.action_index}")
 
